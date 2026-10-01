@@ -54,9 +54,27 @@ puts decompressed  # => "Hello, World!"
 puts decompressed.encoding # => Encoding::UTF_8
 ```
 
-The header used in these methods will not be recognizable from other lz4 block
-parsers. If you need that, it's best to use the Frame API (which is currently a
-WIP).
+The header used in these methods will not be recognizable from other LZ4 block
+parsers. Use the raw block methods when another protocol supplies the size.
+
+### Raw LZ4 blocks
+
+`compress_block` writes a raw LZ4 block without a size or encoding header.
+`decompress_block` takes an explicit maximum output size in bytes. Both methods
+accept a string in any encoding and return an `ASCII-8BIT` string.
+
+```ruby
+compressed = Lz4Flex.compress_block("Hello, World!")
+Lz4Flex.decompress_block(compressed, 13) # => "Hello, World!"
+```
+
+Validate sizes from untrusted input against your application limit before
+calling `decompress_block`: the method allocates that capacity before decoding.
+It returns only the bytes actually decoded, even when the supplied capacity is
+larger. Decoder errors, including truncated input, invalid offsets, and
+insufficient capacity, raise `Lz4Flex::DecodeError`.
+Raw blocks are distinct from the LZ4 frame format and the existing `compress`
+and `VarInt.compress` formats. Larger operations release the GVL.
 
 ### Migrating from `lz4-ruby`
 

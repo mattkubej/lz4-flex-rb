@@ -27,7 +27,7 @@ pub(crate) fn compress_with_header(
 
     let outsize = nogvl_if_large(output.capacity(), || {
         compress_into(input.as_slice(), outbuf)
-    })
+    })?
     .map_err(|e| Error::new(encode_error_class(), e.to_string()))?;
 
     output.set_len(outsize + header_len);
@@ -56,7 +56,7 @@ pub(crate) fn decompress_with_header(
 
     nogvl_if_large(output.capacity(), || {
         decompress_into(input_slice, output.as_mut_slice())
-    })
+    })?
     .map_err(|e| Error::new(decode_error_class(), e.to_string()))?;
 
     output.set_len(header.size as usize);

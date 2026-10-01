@@ -3,7 +3,7 @@ use std::{cell::Cell, ffi::c_void, marker::PhantomData, mem::MaybeUninit, ptr::n
 
 use magnus::{
     encoding::{EncodingCapable, Index},
-    rb_sys::AsRawValue,
+    rb_sys::{protect, AsRawValue},
     value::ReprValue,
     Error, RString, Ruby, TryConvert, Value,
 };
@@ -142,6 +142,26 @@ pub struct RStringMut<'a> {
 }
 
 impl<'a> RStringMut<'a> {
+    pub(crate) fn zeroed(size: usize) -> Result<Self, Error> {
+        let ruby = unsafe { Ruby::get_unchecked() };
+        if size > std::os::raw::c_long::MAX as usize {
+            return Err(Error::new(
+                ruby.exception_range_error(),
+                "output capacity exceeds the maximum string size",
+            ));
+        }
+
+        let mut output = None;
+        protect(|| {
+            output = Some(Self::buf_new(size));
+            rb_sys::Qnil as _
+        })?;
+        let output = output.expect("successful allocation returns a buffer");
+        // lz4_flex takes initialized slices, while rb_str_buf_new leaves bytes uninitialized.
+        unsafe { std::ptr::write_bytes(RSTRING_PTR(output.inner.as_raw()) as *mut u8, 0, size) };
+        Ok(output)
+    }
+
     pub(crate) fn buf_new(size: usize) -> Self {
         let ruby = unsafe { Ruby::get_unchecked() };
         let string = ruby.str_buf_new(size as _);
@@ -188,7 +208,7 @@ impl Drop for RStringMut<'_> {
     }
 }
 
-pub(crate) fn nogvl_if_large<F, R>(input_len: usize, mut func: F) -> R
+pub(crate) fn nogvl_if_large<F, R>(input_len: usize, mut func: F) -> Result<R, Error>
 where
     F: FnMut() -> R,
     R: Sized,
@@ -198,12 +218,12 @@ where
     if input_len > MAX_INPUT_LEN {
         nogvl(func)
     } else {
-        func()
+        Ok(func())
     }
 }
 
 // https://docs.rs/rb-sys/0.9.97/rb_sys/bindings/uncategorized/fn.rb_thread_call_without_gvl.html
-pub(crate) fn nogvl<F, R>(mut func: F) -> R
+pub(crate) fn nogvl<F, R>(mut func: F) -> Result<R, Error>
 where
     F: FnMut() -> R,
     R: Sized,
@@ -221,12 +241,16 @@ where
         null_mut()
     }
 
-    let result = MaybeUninit::uninit(); //location in memory that has not yet been initalized (init'd in call_without_gvl)
-    let arg_ptr = &(&mut func, &result) as *const _ as *mut c_void; //tuple of func and result (raw + mutable) pointers
+    let mut result = MaybeUninit::uninit();
+    let mut args = (&mut func, &mut result);
+    let arg_ptr = &mut args as *mut _ as *mut c_void;
 
-    unsafe {
+    protect(|| unsafe {
         // https://github.com/ruby/ruby/blob/ruby_3_3/thread.c#L1550-L1634
         rb_thread_call_without_gvl(Some(call_without_gvl::<F, R>), arg_ptr, None, null_mut());
-        result.assume_init()
-    }
+        rb_sys::Qnil as _
+    })?;
+
+    // The callback completed unless Ruby raised, in which case protect returned above.
+    Ok(unsafe { result.assume_init() })
 }

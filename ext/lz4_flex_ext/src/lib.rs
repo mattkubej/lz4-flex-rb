@@ -1,6 +1,7 @@
 mod block;
 mod header;
 mod helpers;
+mod raw_block;
 
 pub(crate) use header::*;
 pub(crate) use helpers::*;
@@ -52,6 +53,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     module.define_singleton_method("compress", function!(block::compress, 1))?;
     module.define_singleton_method("decompress", function!(block::decompress, 1))?;
+    module.define_singleton_method("compress_block", function!(raw_block::compress, 1))?;
+    module.define_singleton_method("decompress_block", function!(raw_block::decompress, 2))?;
     module
         .singleton_class()?
         .define_alias("deflate", "compress")?;
